@@ -1647,9 +1647,12 @@ to_memcached(struct args *args)
 
 	char *dep_d = NULL;
 	size_t dep_l = 0;
-	if (generating_dependencies && !read_file(output_dep, 0, &dep_d, &dep_l)) {
-		stats_update(STATS_ERROR);
-		failed();
+	if (generating_dependencies) {
+		use_relative_paths_in_depfile(output_dep);
+		if (!read_file(output_dep, 0, &dep_d, &dep_l)) {
+			stats_update(STATS_ERROR);
+			failed();
+		}
 	}
 
 	if (memccached_set(cached_key, obj_d, stderr_d, dia_d, dep_d,
