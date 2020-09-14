@@ -19,50 +19,28 @@
 
 #include "ccache.h"
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 
-#include <libmemcached/memcached.h>
+#include <curl/curl.h>
 #include <netinet/in.h>
 
 #define MEMCCACHE_MAGIC "CCH1"
-#define MEMCCACHE_BIG "CCBM"
-
-#define MAX_VALUE_SIZE (1000 << 10) // ~1MB with memcached overhead
-#define SPLIT_VALUE_SIZE MAX_VALUE_SIZE
 
 // Status variables for memcached.
-static memcached_st *memc;
+static char *cache_url;
+
+// todo
+typedef int memcached_return_t;
+typedef void* memcached_st;
 
 int memccached_init(char *conf)
 {
-	const char *username = getenv("CCACHE_MEMCACHED_USERNAME"); // Note: bucket
-	const char *password = getenv("CCACHE_MEMCACHED_PASSWORD"); // Note: unsafe
-	memcached_return_t ret;
+    curl_global_init(CURL_GLOBAL_ALL);
 
-	memc = memcached(conf, strlen(conf));
-	if (!memc) {
-		char errorbuf[1024];
-		libmemcached_check_configuration(conf, strlen(conf), errorbuf, 1024);
-		cc_log("Problem creating memcached with conf %s:\n%s\n", conf, errorbuf);
+    cache_url = strdup(conf);
+	if (!cache_url || strlen(cache_url) == 0) {
+		cc_log("Problem creating curl with conf %s:\n", conf);
 		return -1;
-	}
-	// Consistent hashing delivers better distribution and allows servers to be
-	// added to the cluster with minimal cache losses.
-	memcached_behavior_set(memc, MEMCACHED_BEHAVIOR_DISTRIBUTION,
-	                       MEMCACHED_DISTRIBUTION_CONSISTENT);
-	if (username && password) {
-		// The username to use for couchbase is the name of the bucket.
-		ret = memcached_set_sasl_auth_data(memc, username, password);
-		if (memcached_failed(ret)) {
-			if (ret == MEMCACHED_NOT_SUPPORTED) {
-				cc_log("Unsupported SASL authentication");
-			} else {
-				cc_log("%s", memcached_last_error_message(memc));
-			}
-			return -1;
-		}
-		// SASL authentication requires the binary protocol (not ascii).
-		memcached_behavior_set(memc, MEMCACHED_BEHAVIOR_BINARY_PROTOCOL, true);
 	}
 	return 0;
 }
@@ -81,208 +59,39 @@ int memccached_init(char *conf)
 //   <hash[n-1]>
 //   <size[n-1]>
 
-static memcached_return_t memccached_big_set(memcached_st *ptr,
-                                             const char *key,
-                                             size_t key_length,
-                                             const char *value,
-                                             size_t value_length,
-                                             time_t expiration,
-                                             uint32_t flags)
-{
-	int numkeys = (value_length + SPLIT_VALUE_SIZE - 1) / SPLIT_VALUE_SIZE;
-	size_t buflen = 20 + 20 * numkeys;
-	char *buf = x_malloc(buflen);
-	char *p = buf;
-
-	memcpy(p, MEMCCACHE_BIG, 4);
-	*((uint32_t *) (p + 4)) = htonl(numkeys);
-	*((uint32_t *) (p + 8)) = htonl(16);
-	*((uint32_t *) (p + 12)) = htonl(0);
-	*((uint32_t *) (p + 16)) = htonl(value_length);
-	p += 20;
-
-	size_t n = 0;
-	for (size_t x = 0; x < value_length; x += n) {
-		size_t remain = value_length - x;
-		n = remain > SPLIT_VALUE_SIZE ? SPLIT_VALUE_SIZE : remain;
-
-		struct mdfour md;
-		mdfour_begin(&md);
-		mdfour_update(&md, (const unsigned char *) value + x, n);
-
-		char subkey[20];
-		mdfour_result(&md, (unsigned char *) subkey);
-		*((uint32_t *) (subkey + 16)) = htonl(n);
-
-		char *s = format_hash_as_string((const unsigned char *) subkey, n);
-		cc_log("memcached_mset %s %zu", s, n);
-		memcached_return_t ret = memcached_set(
-			ptr, s, strlen(s), value + x, n, expiration, flags);
-		free(s);
-		if (ret) {
-#if LIBMEMCACHED_VERSION_HEX >= 0x01000017
-			const memcached_instance_st *instance;
-#else
-			memcached_server_instance_st instance;
-#endif
-
-			instance = memcached_server_instance_by_position(memc, 0);
-			cc_log("%s %s", memcached_last_error_message(memc),
-			                memcached_server_error(instance));
-			cc_log("Failed to set key in memcached: %s",
-			       memcached_strerror(memc, ret));
-			return ret;
-		}
-
-		memcpy(p, subkey, 20);
-		p += 20;
-	}
-
-	cc_log("memcached_set %.*s %zu (%zu)", (int) key_length, key, buflen,
-	       value_length);
-	int ret = memcached_set(ptr, key, key_length, buf, buflen,
-	                        expiration, flags);
-	free(buf);
-	return ret;
-}
-
-static char *memccached_big_get(memcached_st *ptr,
-                                const char *key,
-                                size_t key_length,
-                                const char *value,
-                                size_t *value_length,
-                                uint32_t *flags,
-                                memcached_return_t *error)
-{
-	if (!value) {
-		value = memcached_get(ptr, key, key_length, value_length, flags, error);
-		if (!value) {
-			return NULL;
-		}
-	}
-
-	char *p = (char *)value;
-	if (memcmp(p, MEMCCACHE_BIG, 4) != 0) {
-		return NULL;
-	}
-
-	int numkeys = ntohl(*(uint32_t *) (p + 4));
-	assert(ntohl(*(uint32_t *) (p + 8)) == 16);
-	assert(ntohl(*(uint32_t *) (p + 12)) == 0);
-	size_t totalsize = ntohl(*(uint32_t *) (p + 16));
-	p += 20;
-
-	char **keys = x_malloc(sizeof(char *) * numkeys);
-	bool *key_seen = x_malloc(sizeof(bool) * numkeys);
-	size_t *key_lengths = x_malloc(sizeof(size_t) * numkeys);
-	size_t *value_offsets = x_malloc(sizeof(size_t) * numkeys);
-	int *value_lengths = x_malloc(sizeof(int) * numkeys);
-
-	size_t buflen = 0;
-	for (int i = 0; i < numkeys; i++) {
-		int n = ntohl(*((uint32_t *) (p + 16)));
-		keys[i] = format_hash_as_string((const unsigned char *) p, n);
-		key_lengths[i] = strlen(keys[i]);
-		key_seen[i] = false;
-		cc_log("memcached_mget %.*s %d", (int) key_lengths[i], keys[i], n);
-		value_offsets[i] = buflen;
-		value_lengths[i] = n;
-		buflen += n;
-		p += 20;
-	}
-	assert(buflen == totalsize);
-
-	char *buf = x_malloc(buflen);
-
-	memcached_return_t	ret = memcached_mget(
-		ptr, (const char *const *) keys, key_lengths, numkeys);
-	if (ret) {
-		cc_log("Failed to mget keys in memcached: %s",
-		       memcached_strerror(memc, ret));
-		for (int i = 0; i < numkeys; i++) {
-			free(keys[i]);
-		}
-		free(keys);
-		free(key_lengths);
-		return NULL;
-	}
-
-	memcached_result_st *result = NULL;
-	do {
-		const char *k;
-		size_t l;
-
-		result = memcached_fetch_result(ptr, result, &ret);
-		if (ret == MEMCACHED_END) {
-			break;
-		}
-		if (ret) {
-			cc_log("Failed to get key in memcached: %s",
-			       memcached_strerror(memc, ret));
-			return NULL;
-		}
-		k = memcached_result_key_value(result);
-		l = memcached_result_key_length(result);
-		p = NULL;
-		int i;
-		for (i = 0; i < numkeys; i++) {
-			if (l != key_lengths[i]) {
-				continue;
-			}
-			if (memcmp(k, keys[i], l) == 0) {
-				p = buf + value_offsets[i];
-				break;
-			}
-		}
-		if (!p) {
-			cc_log("Unknown key was returned: %s", k);
-			return NULL;
-		}
-		if (key_seen[i]) {
-			cc_log("Have already seen chunk: %s", k);
-			return NULL;
-		}
-		key_seen[i] = true;
-		int n = memcached_result_length(result);
-		const char *v = memcached_result_value(result);
-		if (n != value_lengths[i]) {
-			cc_log("Unexpected length was returned");
-			return NULL;
-		}
-		memcpy(p, v, n);
-	} while (ret == MEMCACHED_SUCCESS);
-
-	for (int i = 0; i < numkeys; i++) {
-		if (!key_seen[i]) {
-			cc_log("Failed to get all %d chunks", numkeys);
-			return NULL;
-		}
-	}
-	cc_log("memcached_get %.*s %zu (%zu)", (int) key_length, key, *value_length,
-	       buflen);
-	for (int i = 0; i < numkeys; i++) {
-		free(keys[i]);
-	}
-	free(keys);
-	free(key_lengths);
-	free(value_offsets);
-	free(value_lengths);
-
-	*value_length = buflen;
-	return buf;
-}
-
 int memccached_raw_set(const char *key, const char *data, size_t len)
 {
-	memcached_return_t mret;
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        return -1;
+    }
 
-	mret = memcached_set(memc, key, strlen(key), data, len, 0, 0);
-	if (mret != MEMCACHED_SUCCESS) {
-		cc_log("Failed to move %s to memcached: %s", key,
-		       memcached_strerror(memc, mret));
-		return -1;
-	}
-	return 0;
+    char* url = NULL;
+    asprintf(&url, "%s/%s", cache_url, key);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+
+    struct curl_slist* header_chunk = NULL;
+    header_chunk = curl_slist_append(NULL, "application/octet-stream");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_chunk);
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, len);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
+    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
+
+    CURLcode curl_error = curl_easy_perform(curl);
+
+    long response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(header_chunk);
+
+    if (curl_error != CURLE_OK) {
+        cc_log("Failed to move %s to http cache: return code: %li", key, response_code);
+        return -1;
+    }
+    return 0;
 }
 
 // Blob format for storing:
@@ -330,46 +139,75 @@ int memccached_set(const char *key,
 
 #undef PROCESS_ONE_BUFFER
 
-	memcached_return_t mret;
-	if (buf_len > MAX_VALUE_SIZE) {
-		mret = memccached_big_set(memc, key, strlen(key), buf, buf_len, 0, 0);
-	} else {
-		mret = memcached_set(memc, key, strlen(key), buf, buf_len, 0, 0);
-	}
-
-	if (mret != MEMCACHED_SUCCESS) {
-		cc_log("Failed to move %s to memcached: %s", key,
-		       memcached_strerror(memc, mret));
-		return -1;
-	}
-	return 0;
+	return memccached_raw_set(key, buf, buf_len);
 }
 
 static void *memccached_prune(const char *key)
 {
+    (void)key;
+#if 0
 	cc_log("key from memcached has wrong data %s: pruning...", key);
 	// Don't really care whether delete failed.
 	memcached_delete(memc, key, strlen(key), 0);
+#endif
 	return NULL;
 }
 
-// Caller should free the return calue when done with the pointers.
-void *memccached_raw_get(const char *key, char **data, size_t *size)
-{
-	memcached_return_t mret;
-	void *value;
-	size_t value_l;
+struct writer {
+    char **data;
+    size_t *size;
+};
 
-	value = memcached_get(memc, key, strlen(key), &value_l,
-	                      NULL /*flags*/, &mret);
-	if (!value) {
-		cc_log("Failed to get key from memcached %s: %s", key,
-		       memcached_strerror(memc, mret));
-		return NULL;
-	}
-	*data = value;
-	*size = value_l;
-	return value;
+static size_t my_write(void *buffer, size_t size, size_t nmemb, void *stream)
+{
+    struct writer *out = (struct writer *)stream;
+
+    size_t old_size = *(out->size);
+    size_t write_size = size * nmemb;
+    *(out->size) += write_size;
+
+    *(out->data) = realloc(*(out->data), *(out->size));
+
+    memcpy(*(out->data) + old_size, buffer, write_size);
+
+    return nmemb;
+}
+
+// Caller should free the return value when done with the pointers.
+int memccached_raw_get(const char *key, char **data, size_t *size)
+{
+    CURL *curl = curl_easy_init();
+    if (!curl) {
+        return -1;
+    }
+
+    char* url = NULL;
+    asprintf(&url, "%s/%s", cache_url, key);
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+
+    struct curl_slist* header_chunk = NULL;
+    header_chunk = curl_slist_append(NULL, "application/octet-stream");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_chunk);
+
+    *data = NULL;
+    *size = 0;
+    struct writer callback_data = { data, size };
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, my_write);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &callback_data);
+
+    CURLcode curl_error = curl_easy_perform(curl);
+
+    long response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+    curl_easy_cleanup(curl);
+    curl_slist_free_all(header_chunk);
+
+    if (curl_error != CURLE_OK) {
+        cc_log("Failed to move %s to http cache: return code: %li", key, response_code);
+        return -1;
+    }
+    return 0;
 }
 
 // Caller should free the return value when done with the pointers.
@@ -383,23 +221,13 @@ void *memccached_get(const char *key,
                      size_t *dia_len,
                      size_t *dep_len)
 {
-	char *value;
-	size_t value_l;
-	memcached_return_t mret;
-	value = memcached_get(memc, key, strlen(key), &value_l,
-	                      NULL /*flags*/, &mret);
-	if (!value) {
-		cc_log("Failed to get key from memcached %s: %s", key,
-		       memcached_strerror(memc, mret));
-		return NULL;
-	}
-	if (value_l > 4 && memcmp(value, MEMCCACHE_BIG, 4) == 0) {
-		value = memccached_big_get(memc, key, strlen(key), value, &value_l,
-		                           NULL /*flags*/, &mret);
-	}
-	if (!value) {
-		cc_log("Failed to get key from memcached %s: %s", key,
-		       memcached_strerror(memc, mret));
+	char *value = NULL;
+	size_t value_l = 0;
+	int error;
+
+	error = memccached_raw_get(key, &value, &value_l);
+	if (error) {
+		cc_log("Failed to get key from memcached %s", key);
 		return NULL;
 	}
 	if (value_l < 20 || memcmp(value, MEMCCACHE_MAGIC, 4) != 0) {
@@ -450,8 +278,7 @@ void memccached_free(void *blob)
 
 int memccached_release(void)
 {
-	memcached_free(memc);
-	return 1;
+	return 0;
 }
 
-#endif // HAVE_LIBMEMCACHED
+#endif // HAVE_LIBCURL

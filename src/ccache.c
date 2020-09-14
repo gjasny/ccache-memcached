@@ -36,7 +36,7 @@
 static const char VERSION_TEXT[] =
   MYNAME " version %s\n"
   "\n"
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 	"memcached support: yes\n"
 #else
 	"memcached support: no\n"
@@ -283,7 +283,7 @@ static const char HASH_PREFIX[] = "3";
 static void from_fscache(enum fromcache_call_mode mode,
                          bool put_object_in_manifest);
 static void to_fscache(struct args *args);
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 static void from_memcached(enum fromcache_call_mode mode,
                            bool put_object_in_manifest);
 static void to_memcached(struct args *args);
@@ -1130,7 +1130,7 @@ move_file_to_cache_same_fs(const char *source, const char *dest)
 	do_copy_or_move_file_to_cache(source, dest, false);
 }
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 // Copy data to the cache.
 static void
 put_data_in_cache(void *data, size_t size, const char *dest)
@@ -1223,7 +1223,7 @@ void update_manifest_file(void)
 		update_mtime(manifest_path);
 		if (x_stat(manifest_path, &st) == 0) {
 			stats_update_size(file_size(&st) - old_size, old_size == 0 ? 1 : 0);
-#if HAVE_LIBMEMCACHED
+#if HAVE_LIBCURL
 			char *data;
 			size_t size;
 			if (!str_eq(conf->memcached_conf, "")
@@ -1417,7 +1417,7 @@ to_fscache(struct args *args)
 		}
 	}
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 	if (!str_eq(conf->memcached_conf, "")
 	    && !conf->read_only_memcached
 	    && !using_split_dwarf // No support for the dwo files just yet.
@@ -1470,7 +1470,7 @@ to_fscache(struct args *args)
 	free(tmp_stdout);
 }
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 // Run the real compiler and put the result in cache.
 //
 // TODO: Too much code duplication between to_fscache and to_memcached.
@@ -2258,15 +2258,16 @@ calculate_object_hash(struct args *args, struct mdfour *hash, int direct_mode)
 		if (stat(manifest_path, &st) != 0) {
 			cc_log("Manifest file %s not in cache", manifest_path);
 
-#if HAVE_LIBMEMCACHED
+#if HAVE_LIBCURL
 			void *cache = NULL;
-			char *data;
-			size_t size;
+			char *data = NULL;
+			size_t size = 0;
+			int error = 0;
 			if (!str_eq(conf->memcached_conf, "")) {
 				cc_log("Getting %s from memcached", manifest_key);
-				cache = memccached_raw_get(manifest_key, &data, &size);
+				error = memccached_raw_get(manifest_key, &data, &size);
 			}
-			if (!cache) {
+			if (error) {
 				return NULL;
 			}
 			cc_log("Added object file hash to %s", manifest_path);
@@ -2344,7 +2345,7 @@ from_fscache(enum fromcache_call_mode mode, bool put_object_in_manifest)
 		object_size = st.st_size;
 	} else {
 		cc_log("Object file %s not in cache", cached_obj);
-#if HAVE_LIBMEMCACHED
+#if HAVE_LIBCURL
 		char *data_obj;
 		char *data_stderr;
 		char *data_dia;
@@ -2454,7 +2455,7 @@ from_fscache(enum fromcache_call_mode mode, bool put_object_in_manifest)
 	x_exit(0);
 }
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 // Try to return the compile result from cache. If we can return from cache
 // then this function exits with the correct status code, otherwise it returns.
 //
@@ -3706,7 +3707,7 @@ initialize(void)
 	from_cache = from_fscache;
 	to_cache = to_fscache;
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 	if (!str_eq(conf->memcached_conf, "")) {
 		memccached_init(conf->memcached_conf);
 
@@ -3786,7 +3787,7 @@ cc_reset(void)
 	free(stats_file); stats_file = NULL;
 	output_is_precompiled_header = false;
 
-#ifdef HAVE_LIBMEMCACHED
+#ifdef HAVE_LIBCURL
 	memccached_release();
 #endif
 

@@ -213,7 +213,7 @@ int memccached_set(
 	const char *key,
 	const char *out, const char *err, const char *dia, const char *dep,
 	size_t out_len, size_t err_len, size_t dia_len, size_t dep_len);
-void *memccached_raw_get(const char *key, char **data, size_t *len);
+int memccached_raw_get(const char *key, char **data, size_t *len);
 void* memccached_get(
 	const char *key,
 	char **out, char **err, char **dia, char **dep,

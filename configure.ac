@@ -107,9 +107,8 @@ if test x${enable_memcached} != x; then
         AC_CHECK_LIB(stdc++, __gxx_personality_v0,[])
     fi
     AC_CHECK_LIB(pthread, pthread_once)
-    AC_CHECK_LIB(memcached, memcached,[],[
-    echo '  WARNING: recent version libmemcached not found'
-    echo '  please install libmemcached > 1.0 with development files'
+    AC_CHECK_LIB(curl, curl_global_init,[],[
+    echo '  WARNING: recent version libcurl not found'
     exit 1
     ])
     ccache_memcached='CCACHE_MEMCACHED=1 '
