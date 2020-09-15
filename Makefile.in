@@ -35,6 +35,7 @@ non_3pp_sources = \
     src/exitfn.c \
     src/hash.c \
     src/hashutil.c \
+    src/httpcache.c \
     src/language.c \
     src/lockfile.c \
     src/manifest.c \

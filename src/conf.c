@@ -343,6 +343,8 @@ conf_create(void)
 	conf->max_size = (uint64_t)5 * 1000 * 1000 * 1000;
 	conf->memcached_conf = x_strdup("");
 	conf->memcached_only = false;
+    conf->httpcache_url = x_strdup("");
+    conf->httpcache_only = false;
 	conf->path = x_strdup("");
 	conf->pch_external_checksum = false;
 	conf->prefix_command = x_strdup("");
@@ -350,6 +352,7 @@ conf_create(void)
 	conf->read_only = false;
 	conf->read_only_direct = false;
 	conf->read_only_memcached = false;
+    conf->read_only_httpcache = false;
 	conf->recache = false;
 	conf->run_second_cpp = true;
 	conf->sloppiness = 0;
@@ -379,6 +382,7 @@ conf_free(struct conf *conf)
 	free(conf->ignore_headers_in_manifest);
 	free(conf->log_file);
 	free(conf->memcached_conf);
+    free(conf->httpcache_url);
 	free(conf->path);
 	free(conf->prefix_command);
 	free(conf->prefix_command_cpp);
@@ -621,7 +625,13 @@ conf_print_items(struct conf *conf,
 	reformat(&s, "memcached_only = %s", bool_to_string(conf->memcached_only));
 	printer(s, conf->item_origins[find_conf("memcached_only")->number], context);
 
-	reformat(&s, "path = %s", conf->path);
+    reformat(&s, "httpcache_url = %s", conf->httpcache_url);
+    printer(s, conf->item_origins[find_conf("httpcache_url")->number], context);
+
+    reformat(&s, "httpcache_only = %s", bool_to_string(conf->httpcache_only));
+    printer(s, conf->item_origins[find_conf("httpcache_only")->number], context);
+
+    reformat(&s, "path = %s", conf->path);
 	printer(s, conf->item_origins[find_conf("path")->number], context);
 
 	reformat(&s, "pch_external_checksum = %s",
@@ -647,6 +657,11 @@ conf_print_items(struct conf *conf,
 	         bool_to_string(conf->read_only_memcached));
 	printer(s, conf->item_origins[find_conf("read_only_memcached")->number],
 	        context);
+
+    reformat(&s, "read_only_httpcache = %s",
+             bool_to_string(conf->read_only_httpcache));
+    printer(s, conf->item_origins[find_conf("read_only_httpcache")->number],
+            context);
 
 	reformat(&s, "recache = %s", bool_to_string(conf->recache));
 	printer(s, conf->item_origins[find_conf("recache")->number], context);

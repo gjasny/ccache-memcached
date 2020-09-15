@@ -17,6 +17,7 @@ case $host in
 esac
 
 AC_SUBST(ccache_memcached)
+AC_SUBST(ccache_httpcache)
 AC_SUBST(extra_libs)
 AC_SUBST(include_dev_mk)
 AC_SUBST(test_suites)
@@ -113,6 +114,23 @@ if test x${enable_memcached} != x; then
     exit 1
     ])
     ccache_memcached='CCACHE_MEMCACHED=1 '
+fi
+
+AC_ARG_ENABLE(httpcache,
+  [AS_HELP_STRING([--enable-httpcache],
+    [enable http cache as a cache backend])])
+
+dnl enable-httpcache: Check if -lcurl is needed.
+if test x${enable_httpcache} != x; then
+    if test x${enable_static} != x; then
+        AC_CHECK_LIB(stdc++, __gxx_personality_v0,[])
+    fi
+    AC_CHECK_LIB(pthread, pthread_once)
+    AC_CHECK_LIB(curl, curl_global_init,[],[
+    echo '  WARNING: recent version libcurl not found'
+    exit 1
+    ])
+    ccache_httpcache='CCACHE_HTTPCACHE=1 '
 fi
 
 dnl Check for zlib

@@ -25,6 +25,8 @@ struct conf {
 	uint64_t max_size;
 	char *memcached_conf;
 	bool memcached_only;
+    char *httpcache_url;
+    bool httpcache_only;
 	char *path;
 	bool pch_external_checksum;
 	char *prefix_command;
@@ -32,6 +34,7 @@ struct conf {
 	bool read_only;
 	bool read_only_direct;
 	bool read_only_memcached;
+    bool read_only_httpcache;
 	bool recache;
 	bool run_second_cpp;
 	unsigned sloppiness;

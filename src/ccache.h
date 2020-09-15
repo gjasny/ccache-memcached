@@ -221,6 +221,23 @@ void* memccached_get(
 void memccached_free(void *blob);
 int memccached_release(void);
 
+// -------------------------------------------------------------------------
+// httpcache.c
+
+int httpcache_init(char *conf);
+int httpcache_raw_set(const char *key, const char* data, size_t len);
+int httpcache_set(
+        const char *key,
+        const char *out, const char *err, const char *dia, const char *dep,
+        size_t out_len, size_t err_len, size_t dia_len, size_t dep_len);
+int httpcache_raw_get(const char *key, char **data, size_t *len);
+void* httpcache_get(
+        const char *key,
+        char **out, char **err, char **dia, char **dep,
+        size_t *out_len, size_t *err_len, size_t *dia_len, size_t *dep_len);
+void httpcache_free(void *blob);
+int httpcache_release(void);
+
 // ----------------------------------------------------------------------------
 // stats.c
 
