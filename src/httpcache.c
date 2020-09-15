@@ -60,7 +60,7 @@ int httpcache_raw_set(const char *key, const char *data, size_t len)
 
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, len);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
-    curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
+    //curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "PUT");
 
     CURLcode curl_error = curl_easy_perform(curl);
