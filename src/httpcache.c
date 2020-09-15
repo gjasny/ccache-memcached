@@ -42,13 +42,16 @@ int httpcache_init(char *conf)
 
 int httpcache_raw_set(const char *key, const char *data, size_t len)
 {
+    char* url = NULL;
+    if (asprintf(&url, "%s/%s", cache_url, key) < 0) {
+        return -1;
+    }
+
     CURL *curl = curl_easy_init();
     if (!curl) {
         return -1;
     }
 
-    char* url = NULL;
-    asprintf(&url, "%s/%s", cache_url, key);
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
     struct curl_slist* header_chunk = NULL;
@@ -156,13 +159,16 @@ static size_t httpcache_write(void *buffer, size_t size, size_t nmemb, void *str
 // Caller should free the return value when done with the pointers.
 int httpcache_raw_get(const char *key, char **data, size_t *size)
 {
+    char* url = NULL;
+    if (asprintf(&url, "%s/%s", cache_url, key) < 0) {
+        return -1;
+    }
+
     CURL *curl = curl_easy_init();
     if (!curl) {
         return -1;
     }
 
-    char* url = NULL;
-    asprintf(&url, "%s/%s", cache_url, key);
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
     struct curl_slist* header_chunk = NULL;
