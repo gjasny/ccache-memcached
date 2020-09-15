@@ -633,13 +633,17 @@ char *
 format_hash_as_string(const unsigned char *hash, int size)
 {
 	int i;
-	char *ret = x_malloc(53);
+	char *ret = x_malloc(64+1);
 	for (i = 0; i < 16; i++) {
 		sprintf(&ret[i*2], "%02x", (unsigned) hash[i]);
 	}
-	if (size >= 0) {
-		sprintf(&ret[i*2], "-%d", size);
-	}
+    for (i = 0; i < 8; i++) {
+        sprintf(&ret[(16+i)*2], "00");
+    }
+    uint64_t s = size;
+    for (i = 0; i < 8; i++) {
+        sprintf(&ret[(16+8+i)*2], "%02x", (int)(s >> (8*i)) & 0xFF);
+    }
 	return ret;
 }
 
