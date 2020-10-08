@@ -27,10 +27,16 @@
 #define HTTPCACHE_MAGIC "CCH1"
 
 static char *cache_url;
+static CURL *curl;
 
 int httpcache_init(char *conf)
 {
     curl_global_init(CURL_GLOBAL_ALL);
+
+    curl = curl_easy_init();
+    if (!curl) {
+        return -1;
+    }
 
     cache_url = strdup(conf);
 	if (!cache_url || strlen(cache_url) == 0) {
@@ -47,10 +53,11 @@ int httpcache_raw_set(const char *key, const char *data, size_t len)
         return -1;
     }
 
-    CURL *curl = curl_easy_init();
     if (!curl) {
         return -1;
     }
+
+    curl_easy_reset(curl);
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
@@ -164,10 +171,11 @@ int httpcache_raw_get(const char *key, char **data, size_t *size)
         return -1;
     }
 
-    CURL *curl = curl_easy_init();
     if (!curl) {
         return -1;
     }
+
+    curl_easy_reset(curl);
 
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
@@ -264,6 +272,9 @@ void httpcache_free(void *blob)
 
 int httpcache_release(void)
 {
+    curl_easy_cleanup(curl);
+    curl = NULL;
+
 	return 0;
 }
 
