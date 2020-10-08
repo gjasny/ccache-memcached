@@ -75,7 +75,6 @@ int httpcache_raw_set(const char *key, const char *data, size_t len)
     long response_code;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 
-    curl_easy_cleanup(curl);
     curl_slist_free_all(header_chunk);
 
     if (curl_error != CURLE_OK || response_code < 200 || response_code >= 300) {
@@ -194,7 +193,6 @@ int httpcache_raw_get(const char *key, char **data, size_t *size)
     long response_code;
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 
-    curl_easy_cleanup(curl);
     curl_slist_free_all(header_chunk);
 
     if (curl_error != CURLE_OK || response_code < 200 || response_code >= 300) {
